@@ -2,8 +2,16 @@ import { Context, Schema, Logger, Time } from 'koishi'
 
 export const name = 'win'
 
+export const usage = `更新后，用户可自行指定语录库的下载链接。我们为用户提供了两个链接，请按需复制（右键→复制链接）至下方配置中使用：\n
+* 默认配置，国内可直连下载，但更新进度稍落后：
+> https://eggs.gold/MCA/words.txt
+* Github链接，更新频率高，但可能需要借助加速器下载：
+> https://raw.githubusercontent.com/PoorCha/koishi-plugin-win/master/words.txt \n
+语录库仅供娱乐目的使用，不存在对任何个人或集体的恶意，不包含敏感内容；请勿在群聊内利用本语录库**点评时事**或**发起人身攻击**。插件作者及语录整理者对因不适当使用而造成的损失概不负责。
+`
+
 export interface Config {
-  updateGap: number
+  sayingsUrl: string
   optionsOfAnotherFile?: string
   anotherFilePath?: string
   anotherFileShortcut?: string
@@ -11,7 +19,7 @@ export interface Config {
 }
 
 export const Config: Schema<Config> = Schema.object({
-  updateGap: Schema.number().default(43200000).description('张教授在线语录库的更新间隔，默认12小时更新一次'),
+  sayingsUrl: Schema.string().default('https://eggs.gold/MCA/words.txt').description('张教授在线语录库的链接'),
   optionOfAnotherFile: Schema.string().description('若同时启用另一个语录库，则这里填写使用该语录库的ask指令选项，例如，这里填a，则调用该语录库的指令就是ask -a'),
   anotherFilePath: Schema.string().description('若同时启用另一个语录库，则这里填写其地址'),
   anotherFileShortcut: Schema.string().description('若同时启用另一个语录库，则这里填写其快捷匹配，省去群友手敲指令的麻烦'),
@@ -30,11 +38,9 @@ const chardet = require('chardet');
 
 const https = require('https');
 
-const url = 'https://eggs.gold/MCA/words.txt';
-
 const wordsFile = 'words.tmp';//临时文件名称
 
-let lastDownloadTime = null;//用于存储上一次更新语录库的时间
+//let lastDownloadTime = null;//用于存储上一次更新语录库的时间
 
 declare module 'koishi' {
   interface Tables {
@@ -51,7 +57,8 @@ export interface zvv {
   day: number
   win: number
   group: number
-  winLater: boolean //共同富win功能中，用于标识受帮扶者
+  winLater: boolean //共同富win功能中，用于标识双赢者
+  miniWinDays: number //精准扶win功能中，用于标识小赢天数
 }
 
 
@@ -66,7 +73,8 @@ export function apply(ctx: Context, config: Config) {
     day: 'integer',
     win: 'integer',
     group: 'integer',
-    winLater: 'boolean'
+    winLater: 'boolean',
+    miniWinDays: 'integer'
   }, {
     autoInc: true,
   }
@@ -106,7 +114,7 @@ function getRandomElement(array) {
   return array[randomIndex];
 }
 
-async function getInterpret(date, name, newWin, winIndex, rate) {
+async function getInterpret(date, name, newWin, winIndex, rate, hasTargetedWinAlleviation) {
   //解读赢的结果，其中newWin表示是否今日刚赢
   const month = date[0], day = date[1];
   const win = ['灵活赢。', '小赢。', '中赢。', '大赢。', '特大赢。', '赢麻了。', '输！'];
@@ -116,17 +124,22 @@ async function getInterpret(date, name, newWin, winIndex, rate) {
     ['维为寄语：我想更精彩的故事还在后面。', '维为寄语：这使美国感到害怕了。', '维为寄语：现在确实在开始超越美国了。', '维为寄语：至少美国今天还做不到。'],
     ['维为寄语：这个趋势还会持续下去。', '维为寄语：我们已经不是一般的先进了。', '维为寄语：我们不是一般的领先，对不对？', '维为寄语：别人都不可能超越我们。', '维为寄语：很好地展示了一种自信。'],
     ['维为寄语：这是中国崛起最精彩的地方。', '维为寄语：我们已经对美国形成了巨大的压力。', '维为寄语：必须给美国迎头痛击！', '维为寄语：你真可能会创造世界奇迹的。', '维为寄语：这种自信令人有点回味无穷。'],
-    ['维为寄语：已经震撼了这个世界！', '维为寄语：这是一种发自内心的钦佩。', '维为寄语：真希望美国能达到这个水平。', '维为寄语：至今引以为荣。'],
+    ['维为寄语：已经震撼了这个世界！', '维为寄语：这是一种发自内心的钦佩。', '维为寄语：这种震撼效果前所未有。', '维为寄语：至今引以为荣。'],
     ['教授寄语：你赢赢赢，最后是输光光。']
   ];
+  const targetedWinAlleviationMsg = ['维为寄语：我们手中的牌太多了。', '维为寄语：现在我们有很多新的牌可以打。', '维为寄语：该出手的时候一定要出手。','维为寄语：局面马上就打开了。']
+  if (hasTargetedWinAlleviation) {
+    let result = '';
+    result += '恭喜 ' + name + ' 在' + date[0] + '月' + date[1] + '日受到精准扶win，赢的程度提高40%！\n' + name + ' 当前赢的程度是：' + rate + '%，属于';
+    return result + win[winIndex] + '\n' + getRandomElement(targetedWinAlleviationMsg);
+  }
   if (!newWin && rate > 2) {
     let result = '你已经在' + month + '月' + day + '日赢过了，请明天再继续赢。\n你今天赢的程度是：' + rate + '%，属于';
     return result + win[winIndex];
   }
   else {
     let result = '';
-    result = '恭喜 ' + name + ' 在' + date[0] + '月' + date[1] + '日又赢了一次！\n' + name + ' 赢的程度是：' + rate + '%，属于';
-
+    result += '恭喜 ' + name + ' 在' + date[0] + '月' + date[1] + '日又赢了一次！\n' + name + ' 赢的程度是：' + rate + '%，属于';
     return result + win[winIndex] + '\n' + getRandomElement(msg[winIndex]);
   }
 }
@@ -143,7 +156,6 @@ async function CommonProsperity(ctx, session, rate) {
   let winnester = '';
   let winnestId = '';
   result.forEach((item) => {
-    //exports.logger.success(item.targetName + ' ' + item.win);
     if (item.win > winnest) {
       winnest = item.win;
       winnester = item.targetName;
@@ -193,24 +205,22 @@ function getRandomLineFromFile(filePath) {
   return result;
 }
 
-function downloadFile(url, destination) {
-  //下载语录库
-  //exports.logger.success('进入downloadFile函数！');
+async function downloadFile(url, destination) {
+  //下载语录库，并转换编码至utf8
   return new Promise<void>((resolve, reject) => {
     const file = fs.createWriteStream(destination);
-    https.get(url, (response) => {
+
+    https.get(url, { rejectUnauthorized: false }, (response) => {
       response.pipe(file);
       file.on('finish', () => {
         file.close(() => {
-          // 检测文件编码
           const encoding = chardet.detectFileSync(destination);
           if (encoding !== 'utf8') {
-            // 如果编码不是UTF-8，则进行转换
             const fileContent = fs.readFileSync(destination);
             const decodedContent = iconv.decode(fileContent, encoding);
             const utf8Content = iconv.encode(decodedContent, 'utf8');
             fs.writeFileSync(destination, utf8Content);
-            exports.logger.success('编码不是utf8，已转换完毕。');
+            exports.logger.info('文件编码不是utf8，已转换完毕。');
           }
           resolve();
         });
@@ -221,51 +231,14 @@ function downloadFile(url, destination) {
   });
 }
 
-function downloadAndExtractLine(updateGap) {
-  //exports.logger.success('进入downloadAndExtractLine函数！');
-  return new Promise((resolve, reject) => {
-    const currentTime = new Date().getTime();
-    //根据与上次更新时间，做出操作：下载语录库或从临时文件中抽取一行
-
-    if (!lastDownloadTime || (currentTime - lastDownloadTime) > updateGap) {//上次下载时间大于指定值，则更新
-      exports.logger.success('开始更新语录库。');
-      downloadFile(url, wordsFile)
-        .then(() => {
-          lastDownloadTime = currentTime;
-          const extractedLine = extractRandomLine();
-          resolve(extractedLine);
-        })
-        .catch((error) => {
-          reject(error);
-        });
-    } else {
-      const extractedLine = extractRandomLine();
-      resolve(extractedLine);
-    }
-  });
+function extractRandomLine() {
+  //历史遗留
+  const line = getRandomLineFromFile(wordsFile);
+  return line;
 }
 
-function extractRandomLine() {
-  //处理临时文件
-  //exports.logger.success('进入extractRandomLine函数！');
-  if (!fs.existsSync(wordsFile)) {
-    exports.logger.success('开始下载语录库。');
-    downloadFile(url, wordsFile)
-      .then(() => {
-        exports.logger.success('下载完成。');
-        lastDownloadTime = new Date().getTime();//下载完成后，更新最后一次下载的时间
-        const line = getRandomLineFromFile(wordsFile);
-        //exports.logger.success('抽取的随机行:', line);
-        return line; // 返回抽取的随机行内容
-      })
-      .catch((error) => {
-        exports.logger.error('下载文件失败:', error);
-      });
-  } else {
-    const line = getRandomLineFromFile(wordsFile);
-    //exports.logger.success('抽取的随机行:', line);
-    return line;
-  }
+function sleep(time) {
+  return new Promise((resolve) => setTimeout(resolve, time));
 }
 
 function registerCommand(ctx, config) {
@@ -292,7 +265,6 @@ function registerCommand(ctx, config) {
         if (lastWin[0] == date[0] && lastWin[1] == date[1]) { //日期为今日日期，说明今日已经赢过
           //newWin = false;
           let rate = lastWin[2];
-          //exports.logger.success('今日已赢，程度是' + rate);
           if (rate <= 2) {
             //若win的程度是微赢，则共同富win，返回当前win值以更新表
             let temp = await CommonProsperity(ctx, session, rate);//temp[0]即被帮扶者当前win值，temp[1]即榜一id
@@ -316,13 +288,31 @@ function registerCommand(ctx, config) {
             });
             return;
           }
-          //exports.logger.success('不需要扶贫');
           let win = await getWin(rate);//与win的结果所对应的下标
-          await session.sendQueued(await getInterpret(date, session.author.username, false, win, rate), 2 * Time.second);
+          await session.sendQueued(await getInterpret(date, session.author.username, false, win, rate,false), 2 * Time.second);
         }
-        else {//用户存在但今日未赢，则做更新
+        else {//用户存在且今日未赢，则做更新
           let win = 0;
           let rate = await getRandom();//这里的rate是被抽到的随机数，下面的win则代表赢的结果
+
+          let hasTargetedWinAlleviation = false;
+          //查出小赢的天数
+          let temp = await ctx.database.get('zvv', { targetId: id, group: session.guildId }, 'miniWinDays');
+          let miniWin = 0;
+          temp.forEach((item) => {
+            miniWin = item.miniWinDays;
+          });
+          //exports.logger.info('miniWin = ' + miniWin);
+          if (miniWin >= 3) {//若连续小赢超过3天，则在当日赢的基础上加40%
+            let temp = rate + 40;
+            rate = temp > 100 ? 100 : temp;
+            exports.logger.info(`Id: ${id} in the group: ${session.guildId} has mini-wined ${miniWin} days, so today his win will be ${rate}. `);
+            await ctx.database.set('zvv', { targetId: id, group: session.guildId }, {
+              miniWinDays: 0
+            });//重置天数
+            hasTargetedWinAlleviation = true;
+          }
+
           win = await (getWin(rate)); //获取赢的结果
           exports.logger.success(`Set a new row in zvv table because isExists = ${isExists} and lastWin = ${lastWin[0]}-${lastWin[1]}. id: ${id}, group: ${session.guildId}, date: ${date[0]}-${date[1]}, rate: ${rate}. `);
           await ctx.database.set('zvv', { targetId: id, group: session.guildId }, {
@@ -331,8 +321,19 @@ function registerCommand(ctx, config) {
             day: date[1],
             win: rate,
             winLater: false
-          });
-          await session.sendQueued(await getInterpret(date, session.author.username, true, win, rate), 2 * Time.second); //解读赢的结果并发送至消息队列
+          });//更新数据，小赢天数则在前后单独计算
+
+          if (win == 1) {//如果赢的程度是小赢，则将该用户的miniWinDays字段加1，其中也包括受帮扶后的小赢
+            await ctx.database.set('zvv', { targetId: id, group: session.guildId }, {
+              miniWinDays: { $add: [{ $: 'miniWinDays' }, 1] }
+            });
+          } else {//否则归零
+            await ctx.database.set('zvv', { targetId: id, group: session.guildId }, {
+              miniWinDays: 0
+            });
+          }
+
+          await session.sendQueued(await getInterpret(date, session.author.username, true, win, rate, hasTargetedWinAlleviation), 2 * Time.second); //解读赢的结果并发送至消息队列
           return;
         }
       }
@@ -348,9 +349,10 @@ function registerCommand(ctx, config) {
           day: date[1],
           win: rate,
           group: session.guildId,
-          winLater: false
+          winLater: false,
+          miniWinDays: (win == 1) ? 1 : 0
         });
-        await session.sendQueued(await getInterpret(date, session.author.username, true, win, rate), 2 * Time.second);
+        await session.sendQueued(await getInterpret(date, session.author.username, true, win, rate,false), 2 * Time.second);
         return;
       }
     });
@@ -438,22 +440,24 @@ function registerCommand(ctx, config) {
     .shortcut(`${config.anotherFileShortcut}`, { fuzzy: true, options: { another: true } })//为调用新语录库配置别名
     .action(async ({ session, options }, arg) => {
       //传入一个事件，获取张教授对该事件的评价
+      let something = (arg === undefined) ? '' : arg;
       let cmt = '';
       let rvwr = '';//评论者
       if (!options.another) {
         //没有指定另一个语录库的路径，则从默认语录库中抽取
-        //exports.logger.success('进入无选项分支！');
-        downloadAndExtractLine(config.updateGap)
-          .then((randomLine) => {
-            //exports.logger.success('函数执行完毕，准备结果：' + randomLine);
-            rvwr += '张教授';
-            cmt += randomLine;
-            if (!arg) session.sendQueued(rvwr + '的评价是：' + cmt, 1 * Time.second);
-            else session.sendQueued(rvwr + '对' + arg + '的评价是：' + cmt, 1 * Time.second);
+        try {
+          const randomLine = extractRandomLine();
+          rvwr += '张教授';
+          cmt += randomLine;
+          if (!arg) session.sendQueued(rvwr + '的评价是：' + cmt, 1 * Time.second);
+          else session.sendQueued(rvwr + '对' + something + '的评价是：' + cmt, 1 * Time.second);
+        } catch {
+          session.execute(`ask.update`);
+          sleep(2000).then(() => {
+            session.execute(`ask ${something}`);
           })
-          .catch((error) => {
-            exports.logger.error('发生错误:', error);
-          });
+        }
+        return;
       }
       else {
         //从指定语录库中抽取
@@ -461,7 +465,18 @@ function registerCommand(ctx, config) {
         cmt += getRandomLineFromFile(config.anotherFilePath);
         if (!arg) await session.sendQueued(rvwr + '的评价是：' + cmt, 1 * Time.second);
         else await session.sendQueued(rvwr + '对' + arg + '的评价是：' + cmt, 1 * Time.second);
+        return;
       }
     });
 
+  ctx.command('ask.update')
+    .alias('更新语录库')
+    .action(async ({ session }) => {
+      // 将更新语录库功能拆分出来
+      //session.sendQueued('123:' + config.sayingsUrl);
+      downloadFile(config.sayingsUrl, wordsFile)
+      exports.logger.success('语录库更新完成。');
+      //session.sendQueued('语录库更新完成。');
+      return;
+    });
 }
