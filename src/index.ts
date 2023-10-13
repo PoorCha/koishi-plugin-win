@@ -1,5 +1,7 @@
 import { Context, Schema, Logger, Time } from 'koishi'
 
+import cron from 'node-cron';
+
 export const name = 'win'
 
 export const usage = `更新后，用户可自行指定语录库的下载链接。我们为用户提供了两个链接，请按需复制（右键→复制链接）至下方配置中使用：\n
@@ -61,9 +63,23 @@ export interface zvv {
   miniWinDays: number //精准扶win功能中，用于标识小赢天数
 }
 
+let windWindow = -1; //风口
+let hasBlowed = []; //存储有人乘着风口win过的群组
+
+const generatewindWindow = cron.schedule('0 0 * * *', () => {
+  const randomHour = Math.floor(Math.random() * 13) + 9;
+  exports.logger.success('The wind-window today is ' + randomHour + '.');
+  windWindow = randomHour;
+  hasBlowed = [];
+});
 
 export function apply(ctx: Context, config: Config) {
   registerCommand(ctx, config);
+  generatewindWindow.start();
+  ctx.on('dispose', () => {
+    // 若插件被停用，则清除计时器
+    generatewindWindow.stop();
+  });
   ctx.model.extend('zvv', {
     // 记录各群各人win情况
     id: 'unsigned',
@@ -80,6 +96,7 @@ export function apply(ctx: Context, config: Config) {
   }
   )
 }
+
 async function getRandom() {
   //获取1-100随机数
   const num = Math.floor(Math.random() * (100 - 1 + 1)) + 1;
@@ -103,8 +120,10 @@ async function getDate() {
   const date = new Date();
   const month = date.getMonth() + 1;
   const day = date.getDate();
+  const hour = date.getHours();
   date[0] = month;
   date[1] = day;
+  date[2] = hour;
   return date;
 }
 
@@ -114,7 +133,7 @@ function getRandomElement(array) {
   return array[randomIndex];
 }
 
-async function getInterpret(date, name, newWin, winIndex, rate, hasTargetedWinAlleviation) {
+async function getInterpret(date, name, newWin, winIndex, rate, hasTargetedWinAlleviation, tempBlowed) {
   //解读赢的结果，其中newWin表示是否今日刚赢
   const month = date[0], day = date[1];
   const win = ['灵活赢。', '小赢。', '中赢。', '大赢。', '特大赢。', '赢麻了。', '输！'];
@@ -124,22 +143,26 @@ async function getInterpret(date, name, newWin, winIndex, rate, hasTargetedWinAl
     ['维为寄语：我想更精彩的故事还在后面。', '维为寄语：这使美国感到害怕了。', '维为寄语：现在确实在开始超越美国了。', '维为寄语：至少美国今天还做不到。'],
     ['维为寄语：这个趋势还会持续下去。', '维为寄语：我们已经不是一般的先进了。', '维为寄语：我们不是一般的领先，对不对？', '维为寄语：别人都不可能超越我们。', '维为寄语：很好地展示了一种自信。'],
     ['维为寄语：这是中国崛起最精彩的地方。', '维为寄语：我们已经对美国形成了巨大的压力。', '维为寄语：必须给美国迎头痛击！', '维为寄语：你真可能会创造世界奇迹的。', '维为寄语：这种自信令人有点回味无穷。'],
-    ['维为寄语：已经震撼了这个世界！', '维为寄语：这是一种发自内心的钦佩。', '维为寄语：这种震撼效果前所未有。', '维为寄语：至今引以为荣。'],
+    ['维为寄语：已经震撼了这个世界。', '维为寄语：这是一种发自内心的钦佩。', '维为寄语：这种震撼效果前所未有。', '维为寄语：至今引以为荣。'],
     ['教授寄语：你赢赢赢，最后是输光光。']
   ];
   const targetedWinAlleviationMsg = ['维为寄语：我们手中的牌太多了。', '维为寄语：现在我们有很多新的牌可以打。', '维为寄语：该出手的时候一定要出手。','维为寄语：局面马上就打开了。']
-  if (hasTargetedWinAlleviation) {
+
+  if (hasTargetedWinAlleviation) {//精准扶win
     let result = '';
-    result += '恭喜 ' + name + ' 在' + date[0] + '月' + date[1] + '日受到精准扶win，赢的程度提高40%！\n' + name + ' 当前赢的程度是：' + rate + '%，属于';
+    result += '恭喜 ' + name + ' 在' + date[0] + '月' + date[1] + '日受到精准扶win，赢级提高40%！\n' + name + ' 当前赢级是：' + rate + '%，属于';
     return result + win[winIndex] + '\n' + getRandomElement(targetedWinAlleviationMsg);
   }
-  if (!newWin && rate > 2) {
-    let result = '你已经在' + month + '月' + day + '日赢过了，请明天再继续赢。\n你今天赢的程度是：' + rate + '%，属于';
+  if (!newWin && rate > 2) {//已经win过
+    let result = '你已经在' + month + '月' + day + '日赢过了，请明天再继续赢。\n' + name + ' 今天的赢级是：' + rate + '%，属于';
     return result + win[winIndex];
   }
-  else {
-    let result = '';
-    result += '恭喜 ' + name + ' 在' + date[0] + '月' + date[1] + '日又赢了一次！\n' + name + ' 赢的程度是：' + rate + '%，属于';
+  if (tempBlowed) {//乘上风口
+    let result = '恭喜 ' + name + ' 在' + date[0] + '月' + date[1] + '日乘上风口，赢级提高40%！\n' + name + ' 的赢级是：' + rate + '%，属于';
+    return result + win[winIndex] + '\n' + getRandomElement(msg[winIndex]);
+  }
+  else {//正常win
+    let result = '恭喜 ' + name + ' 在' + date[0] + '月' + date[1] + '日赢了一次！\n' + name + ' 的赢级是：' + rate + '%，属于';
     return result + win[winIndex] + '\n' + getRandomElement(msg[winIndex]);
   }
 }
@@ -151,7 +174,7 @@ async function CommonProsperity(ctx, session, rate) {
     month: date[0],
     day: date[1],
     group: session.guildId
-  }, ['targetId', 'targetName', 'win']);//查出的内容包括用户账号及赢的程度
+  }, ['targetId', 'targetName', 'win']);//查出的内容包括用户账号及赢级
   let winnest = 0;
   let winnester = '';
   let winnestId = '';
@@ -165,12 +188,12 @@ async function CommonProsperity(ctx, session, rate) {
 
   if (winnest < 76) {
     //榜一不是大赢以上
-    await session.sendQueued('最赢者不够努力，没有达到大赢的程度，无力帮扶。');
+    await session.sendQueued('最赢者不够努力，赢级尚未达到大赢，无力帮扶。');
     return [-1, ''];
   }
 
   const nowWin = Math.round((winnest + rate) / 2);
-  await session.sendQueued('恭喜 ' + session.author.username + ' 在 ' + winnester + ' 的帮扶下实现共同富win，赢的程度达到了' + nowWin + '%！', 2 * Time.second);
+  await session.sendQueued('恭喜 ' + session.author.name + ' 在 ' + winnester + ' 的帮扶下实现共同富win，使赢级达到了' + nowWin + '%！', 2 * Time.second);
   return [nowWin, winnestId];
 }
 
@@ -220,7 +243,7 @@ async function downloadFile(url, destination) {
             const decodedContent = iconv.decode(fileContent, encoding);
             const utf8Content = iconv.encode(decodedContent, 'utf8');
             fs.writeFileSync(destination, utf8Content);
-            exports.logger.info('文件编码不是utf8，已转换完毕。');
+            //exports.logger.info('文件编码不是utf8，已转换完毕。');
           }
           resolve();
         });
@@ -242,22 +265,21 @@ function sleep(time) {
 }
 
 function registerCommand(ctx, config) {
-  /*
-   * 定义赢指令。
-   */
-  ctx.command('win', '查询今日有多赢，每群每人每日仅抽一次\n若用户当日抽到“微赢”，则可触发“共同富win”，当日可再抽一次，赢的程度将与该群大赢以上的榜一平分。')
+  ctx.command('win', '查询今日有多赢，每群每人每日仅抽一次\n拥有“共同富win”、“精准扶win”、“风口飞win”功能')
     .action(async ({ session }) => {
 
       if (isNaN(session.guildId)) {
         await session.sendQueued('独赢赢不如众赢赢，请在群组内使用该指令。');
         return;
       }
-      const id = session.userId;//获取发送者的用户id
+      const id = session.userId;//发送者的用户id
+      const guild = session.guildId;//发送者所在群组id
+      const username = session.author.name;//发送者的用户名
 
-      const date = await getDate(); //获取当前日期，数组下标0为月份，1为日期
-      const isExists = await isTargetIdExists(ctx, id, session.guildId); //该群中的该用户是否赢过
+      const date = await getDate(); //获取当前日期，数组下标0为月份，1为日期，2为小时
+      const isExists = await isTargetIdExists(ctx, id, guild); //该群中的该用户是否赢过
       if (isExists) { //若该群中的该用户存在，则获取其上一次赢的日期
-        let last = await ctx.database.get('zvv', { targetId: id, group: session.guildId }, ['month', 'day', 'win']); //获取用户id上一次赢的日期
+        let last = await ctx.database.get('zvv', { targetId: id, group: guild }, ['month', 'day', 'win']); //获取用户id上一次赢的日期
 
         let lastWin = transform(last);
 
@@ -273,86 +295,98 @@ function registerCommand(ctx, config) {
               return;
             }
             //更新被帮扶者信息
-            exports.logger.success(`Set a new row in zvv table because id: ${id} in the group: ${session.guildId} in date: ${date[0]}-${date[1]} has enjoyed the fruits of common prosperity, nowWin: ${temp[0]}. `);
-            await ctx.database.set('zvv', { targetId: id, group: session.guildId }, {
-              targetName: session.author.username,
+            exports.logger.success(`Set a new row in zvv table because id: ${id} in the group: ${guild} in date: ${date[0]}-${date[1]} has enjoyed the fruits of common prosperity, nowWin: ${temp[0]}. `);
+            await ctx.database.set('zvv', { targetId: id, group: guild }, {
+              targetName: username,
               month: date[0],
               day: date[1],
               win: temp[0],
               winLater: true
             });
             //更新榜一信息
-            exports.logger.success(`Set a new row in zvv table because id: ${temp[1]} in the group: ${session.guildId} in date: ${date[0]}-${date[1]} has win-win with ${id}. `);
-            await ctx.database.set('zvv', { targetId: temp[1], group: session.guildId }, {
+            exports.logger.success(`Set a new row in zvv table because id: ${temp[1]} in the group: ${guild} in date: ${date[0]}-${date[1]} has win-win with ${id}. `);
+            await ctx.database.set('zvv', { targetId: temp[1], group: guild }, {
               winLater: true
             });
             return;
           }
           let win = await getWin(rate);//与win的结果所对应的下标
-          await session.sendQueued(await getInterpret(date, session.author.username, false, win, rate,false), 2 * Time.second);
+          await session.sendQueued(await getInterpret(date, username, false, win, rate, false, false), 2 * Time.second);
         }
         else {//用户存在且今日未赢，则做更新
-          let win = 0;
+          let winLevel = 0;
           let rate = await getRandom();//这里的rate是被抽到的随机数，下面的win则代表赢的结果
+          let tempBlowed = false;//用于临时标记用户是否乘过风口
 
-          let hasTargetedWinAlleviation = false;
+          if (date[2] == windWindow && !hasBlowed.includes(guild)) {//如果某用户win的所在时间恰好是“风口”，且该风口内还没有人win，则赢级加40%
+            rate = (rate + 40 > 100) ? 100 : (rate + 40);
+            hasBlowed.push(guild);//将该群组加入hasBlowed数组，说明该群组内已经有人乘过风口了
+            tempBlowed = true;//临时标记
+          }
+
+          let hasTargetedWinAlleviation = false;//用于标记是否被精准帮扶过
           //查出小赢的天数
-          let temp = await ctx.database.get('zvv', { targetId: id, group: session.guildId }, 'miniWinDays');
+          let temp = await ctx.database.get('zvv', { targetId: id, group: guild }, 'miniWinDays');
           let miniWin = 0;
           temp.forEach((item) => {
             miniWin = item.miniWinDays;
           });
-          //exports.logger.info('miniWin = ' + miniWin);
-          if (miniWin >= 3) {//若连续小赢超过3天，则在当日赢的基础上加40%
+          if (miniWin >= 3 && !tempBlowed) {//若连续小赢超过3天，且当日没有乘上风口，则在当日赢级的基础上加40%
             let temp = rate + 40;
             rate = temp > 100 ? 100 : temp;
-            exports.logger.info(`Id: ${id} in the group: ${session.guildId} has mini-wined ${miniWin} days, so today his win will be ${rate}. `);
-            await ctx.database.set('zvv', { targetId: id, group: session.guildId }, {
-              miniWinDays: 0
-            });//重置天数
+            exports.logger.info(`Id: ${id} in the group: ${guild} has mini-wined ${miniWin} days, so today his win will be ${rate}. `);
+            await ctx.database.set('zvv', { targetId: id, group: guild }, {
+              miniWinDays: 0, //重置天数
+            });
             hasTargetedWinAlleviation = true;
           }
 
-          win = await (getWin(rate)); //获取赢的结果
+          winLevel = await (getWin(rate)); //获取赢的结果
           exports.logger.success(`Set a new row in zvv table because isExists = ${isExists} and lastWin = ${lastWin[0]}-${lastWin[1]}. id: ${id}, group: ${session.guildId}, date: ${date[0]}-${date[1]}, rate: ${rate}. `);
-          await ctx.database.set('zvv', { targetId: id, group: session.guildId }, {
-            targetName: session.author.username,
+          await ctx.database.set('zvv', { targetId: id, group: guild }, {
+            targetName: username,
             month: date[0],
             day: date[1],
             win: rate,
             winLater: false
           });//更新数据，小赢天数则在前后单独计算
 
-          if (win == 1) {//如果赢的程度是小赢，则将该用户的miniWinDays字段加1，其中也包括受帮扶后的小赢
-            await ctx.database.set('zvv', { targetId: id, group: session.guildId }, {
+          if (winLevel == 1) {//如果赢的程度是小赢，则将该用户的miniWinDays字段加1，其中也包括受帮扶后的小赢
+            await ctx.database.set('zvv', { targetId: id, group: guild }, {
               miniWinDays: { $add: [{ $: 'miniWinDays' }, 1] }
             });
-          } else {//否则归零
-            await ctx.database.set('zvv', { targetId: id, group: session.guildId }, {
+          } else { //否则归零
+            await ctx.database.set('zvv', { targetId: id, group: guild }, {
               miniWinDays: 0
             });
           }
 
-          await session.sendQueued(await getInterpret(date, session.author.username, true, win, rate, hasTargetedWinAlleviation), 2 * Time.second); //解读赢的结果并发送至消息队列
+          await session.sendQueued(await getInterpret(date, username, true, winLevel, rate, hasTargetedWinAlleviation, tempBlowed), 2 * Time.second); //解读赢的结果并发送至消息队列
           return;
         }
       }
       else { //用户不存在，在表中插入一行
-        let win = 0;
+        let winLevel = 0;
         let rate = await getRandom();
-        win = await (getWin(rate)); //获取赢的结果
-        exports.logger.success(`Create a new row in zvv table because isExists = ${isExists}. id: ${id}, group: ${session.guildId}, date: ${date[0]}-${date[1]}, rate: ${rate}.`);
+        let tempBlowed = false;//用于临时标记用户是否乘过风口
+        if (date[2] == windWindow && !hasBlowed.includes(guild)) {//如果某用户win的所在时间恰好是“风口”，且该风口内还没有人win，则赢级加40%
+          rate = (rate + 40 > 100) ? 100 : (rate + 40);
+          hasBlowed.push(guild);//将该群组加入hasBlowed数组，说明该群组内已经有人乘过风口了
+          tempBlowed = true;//临时标记
+        }
+        winLevel = await (getWin(rate)); //获取赢的结果
+        exports.logger.success(`Create a new row in zvv table because isExists = ${isExists}. id: ${id}, group: ${guild}, date: ${date[0]}-${date[1]}, rate: ${rate}.`);
         await ctx.database.create('zvv', {
           targetId: id,
-          targetName: session.author.username,
+          targetName: username,
           month: date[0],
           day: date[1],
           win: rate,
-          group: session.guildId,
+          group: guild,
           winLater: false,
-          miniWinDays: (win == 1) ? 1 : 0
+          miniWinDays: (winLevel == 1) ? 1 : 0
         });
-        await session.sendQueued(await getInterpret(date, session.author.username, true, win, rate,false), 2 * Time.second);
+        await session.sendQueued(await getInterpret(date, username, true, winLevel, rate, false, tempBlowed), 2 * Time.second);
         return;
       }
     });
@@ -417,8 +451,8 @@ function registerCommand(ctx, config) {
         const toll = newArr.length;
 
         const output = `${session.guildName}（${session.guildId}）今日共有${toll}人赢了。\n` +
-          `其中，赢的程度最高者是：${newArr[0][1]}（${newArr[0][0]})，其赢的程度为${newArr[0][2]}%；\n` +
-          `最低者是：${newArr[toll - 1][1]}（${newArr[toll - 1][0]})，其赢的程度为${newArr[toll - 1][2]}%。\n` +
+          `其中，赢级最高者是：${newArr[0][1]}（${newArr[0][0]})，其赢级为${newArr[0][2]}%；\n` +
+          `最低者是：${newArr[toll - 1][1]}（${newArr[toll - 1][0]})，其赢级为${newArr[toll - 1][2]}%。\n` +
           `本群今日总win值的平均值为${averageValue.toFixed(2)}，中位数为${medianValue}，极差为${rangeValue}，方差为${varianceValue.toFixed(2)}，标准差为${standardDeviationValue.toFixed(2)}。`;
 
         await session.sendQueued(output);
@@ -469,14 +503,33 @@ function registerCommand(ctx, config) {
       }
     });
 
-  ctx.command('ask.update')
+  ctx.command('ask.update', { authority: 3 })
     .alias('更新语录库')
     .action(async ({ session }) => {
-      // 将更新语录库功能拆分出来
-      //session.sendQueued('123:' + config.sayingsUrl);
+      //将更新语录库功能拆分出来
       downloadFile(config.sayingsUrl, wordsFile)
-      exports.logger.success('语录库更新完成。');
+      exports.logger.success('Update completed.');
       //session.sendQueued('语录库更新完成。');
+      return;
+    });
+
+  ctx.command('win.window', { authority: 3 })
+    .alias('查看风口')
+    .action(async ({ session }) => {
+      //更新或查看当前风口
+      await session.sendQueued('当前风口值详见日志。');
+      if (windWindow == -1) {//因为某些原因，错过了窗口的生成
+        const randomHour = Math.floor(Math.random() * 13) + 9;
+        //const randomHour = temp;
+        exports.logger.success('The wind-window today was not generated, and has been set to ' + randomHour + '; The array hasBlowed has been cleaned as well.');
+        windWindow = randomHour;
+        hasBlowed = [];
+        return;
+      }
+      let outputHasBlowed = '';
+      if (hasBlowed.length == 0) outputHasBlowed = 'empty.';
+      else outputHasBlowed = hasBlowed.join(', ') + '.';
+      exports.logger.info('The wind-window today is ' + windWindow + ', and the hasBlowed array is ' + outputHasBlowed);
       return;
     });
 }
