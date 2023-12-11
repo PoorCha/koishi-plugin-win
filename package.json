@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-win",
-  "description": "我们又赢了！",
-  "version": "0.0.28",
+  "description": "我们遥遥领先！",
+  "version": "0.0.43",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -17,5 +17,11 @@
   ],
   "peerDependencies": {
     "koishi": "^4.14.5"
+  },
+  "dependencies": {
+    "node-cron": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/node-cron": "^3.0.8"
   }
 }
